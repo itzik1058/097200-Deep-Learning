@@ -47,8 +47,7 @@ class MNISTClassifier:
             self.layer_activations.append(out)
         return out
 
-    def loss(self, x, y):
-        out = self.forward(x)
+    def loss(self, out, y):
         y = y.view(-1)
         y_prob = torch.zeros(size=(y.shape[0], self.weights[-1].shape[1]), device=y.device)
         y_prob[torch.arange(y.shape[0]), y] = 1
@@ -94,16 +93,18 @@ def main():
         epoch_loss = []
         epoch_accuracy = []
         for image, label in train_loader:
-            epoch_accuracy.append((model.forward(image.to(device)).argmax(dim=1) == label.to(device)).sum().item())
-            loss = model.loss(image.to(device), label.to(device)).item()
+            out = model.forward(image.to(device))
+            epoch_accuracy.append((out.argmax(dim=1) == label.to(device)).sum().item())
+            loss = model.loss(out, label.to(device)).item()
             epoch_loss.append(loss)
             model.backward()
             model.step(lr=lr)
         epoch_test_loss = []
         epoch_test_accuracy = []
         for image, label in test_loader:
-            epoch_test_accuracy.append((model.forward(image.to(device)).argmax(dim=1) == label.to(device)).sum().item())
-            epoch_test_loss.append(model.loss(image.to(device), label.to(device)).item())
+            out = model.forward(image.to(device))
+            epoch_test_accuracy.append((out.argmax(dim=1) == label.to(device)).sum().item())
+            epoch_test_loss.append(model.loss(out, label.to(device)).item())
         train_loss.append(sum(epoch_loss) / len(epoch_loss))
         test_loss.append(sum(epoch_test_loss) / len(epoch_test_loss))
         train_accuracy.append(sum(epoch_accuracy) / len(train_loader.dataset))
