@@ -6,15 +6,15 @@ from PIL import Image
 
 class TokenDictionary:
     def __init__(self):
-        self.words = []
-        self.tokens = {}
+        self.words = [None]
+        self.tokens = {None: 0}
 
     def __len__(self):
         return len(self.tokens)
 
     @property
     def pad_token(self):
-        return len(self.tokens)
+        return self.tokens[None]
 
     def tokenize(self, sentence, as_sentence=False):
         tokens = []
