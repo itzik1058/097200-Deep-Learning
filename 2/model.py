@@ -1,5 +1,10 @@
 import torch
 import torch.nn as nn
+from torch.nn.utils.weight_norm import weight_norm
+
+
+def weight_norm_linear(in_features, out_features):
+    return weight_norm(nn.Linear(in_features, out_features), dim=None)
 
 
 class VQA(nn.Module):
@@ -8,37 +13,34 @@ class VQA(nn.Module):
         self.q_embedding = q_embedding
         self.i_embedding = i_embedding
         self.attention = attention
-        self.q_hid = nn.Linear(q_embedding.hidden_dim, hidden_dim)
-        self.i_hid = nn.Linear(i_embedding.hidden_dim, hidden_dim)
+        self.q_hid = weight_norm_linear(q_embedding.hidden_dim, hidden_dim)
+        self.i_hid = weight_norm_linear(i_embedding.hidden_dim, hidden_dim)
         self.decoder = decoder
         self.num_classes = decoder.num_classes
 
-    def forward(self, image, q_embed, question_length):
+    def forward(self, image, q_embed):
         i_embed = self.i_embedding(image)
-        q_embed = self.q_embedding(q_embed, question_length)
+        q_embed = self.q_embedding(q_embed)
         attention = self.attention(i_embed, q_embed)
         i_embed = torch.mul(i_embed, attention).sum(dim=1)
         return self.decoder(torch.mul(self.i_hid(i_embed), self.q_hid(q_embed)))
 
 
 class QuestionEncoder(nn.Module):
-    def __init__(self, vocab_dim, embed_dim, num_layers, dropout):
+    def __init__(self, vocab_dim, embed_dim, num_layers):
         super(QuestionEncoder, self).__init__()
-        self.embedding = nn.Sequential(
-            nn.Embedding(num_embeddings=vocab_dim, embedding_dim=embed_dim, padding_idx=0),
-            nn.AlphaDropout(),
-            nn.SELU(inplace=True)
-        )
-        self.lstm = nn.LSTM(input_size=embed_dim, hidden_size=embed_dim, num_layers=num_layers,
-                            batch_first=True, dropout=dropout)
-        self.hidden_dim = embed_dim * num_layers * 2
+        self.embedding = nn.Embedding(num_embeddings=vocab_dim, embedding_dim=embed_dim, padding_idx=0)
+        self.rnn = nn.LSTM(input_size=embed_dim, hidden_size=embed_dim, num_layers=num_layers,
+                           batch_first=True, bidirectional=True)
+        self.rnn_hid = embed_dim
+        self.hidden_dim = embed_dim * (1 + self.rnn.bidirectional)
 
-    def forward(self, question, length):
+    def forward(self, question):
         embed = self.embedding(question)
-        packed = nn.utils.rnn.pack_padded_sequence(embed, length, batch_first=True)
-        lstm_out, (h, c) = self.lstm(packed)
-        unpacked, _ = nn.utils.rnn.pad_packed_sequence(lstm_out, batch_first=True)
-        state = torch.cat((h, c), dim=1)
+        rnn_out, _ = self.rnn(embed)
+        forward = rnn_out[:, -1, :self.rnn_hid]
+        backward = rnn_out[:, 0, self.rnn_hid:]
+        state = torch.cat((forward, backward), dim=1)
         state = state.view(question.size(0), -1)
         return state
 
@@ -57,7 +59,7 @@ class ImageEncoder(nn.Module):
                 feature_layers.append(nn.ReLU(inplace=True))
                 channels = layer
         self.features = nn.Sequential(*feature_layers)
-        self.avg_pool = nn.AdaptiveAvgPool2d((8, 8))
+        self.avg_pool = nn.AdaptiveAvgPool2d((7, 7))
 
     def forward(self, x):
         x = self.features(x)
@@ -66,20 +68,20 @@ class ImageEncoder(nn.Module):
 
 
 class VQAttention(nn.Module):
-    def __init__(self, i_dim, q_dim, hidden_dim, dropout=0.2):
+    def __init__(self, i_dim, q_dim, hidden_dim, dropout):
         super(VQAttention, self).__init__()
-        self.i_hid = nn.Linear(i_dim, hidden_dim)
-        self.q_hid = nn.Linear(q_dim, hidden_dim)
+        self.i_hid = weight_norm_linear(i_dim, hidden_dim)
+        self.q_hid = weight_norm_linear(q_dim, hidden_dim)
         self.attention = nn.Sequential(
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim, 1),
+            weight_norm_linear(hidden_dim, 1),
             nn.Softmax(dim=1)
         )
 
     def forward(self, i_embed, q_embed):
         i_hid = self.i_hid(i_embed)
         q_hid = self.q_hid(q_embed).unsqueeze(dim=1).repeat(1, i_embed.size(1), 1)
-        return self.attention(i_hid * q_hid)
+        return self.attention(torch.mul(i_hid, q_hid))
 
 
 class VQADecoder(nn.Module):
@@ -87,12 +89,10 @@ class VQADecoder(nn.Module):
         super(VQADecoder, self).__init__()
         self.num_classes = vocab_dim
         self.decoder = nn.Sequential(
+            weight_norm_linear(state_dim, vocab_dim),
             nn.SELU(inplace=True),
             nn.AlphaDropout(dropout),
-            nn.Linear(state_dim, vocab_dim),
-            nn.SELU(inplace=True),
-            nn.AlphaDropout(dropout),
-            nn.Linear(vocab_dim, vocab_dim),
+            weight_norm_linear(vocab_dim, vocab_dim)
         )
 
     def forward(self, state):
@@ -100,8 +100,8 @@ class VQADecoder(nn.Module):
 
 
 def make_model(q_vocab, a_vocab, hidden_dim):
-    q_embedding = QuestionEncoder(len(q_vocab), 300, 2, dropout=0.1)
+    q_embedding = QuestionEncoder(len(q_vocab), 300, 2)
     i_embedding = ImageEncoder()
-    attention = VQAttention(i_embedding.hidden_dim, q_embedding.hidden_dim, hidden_dim)
+    attention = VQAttention(i_embedding.hidden_dim, q_embedding.hidden_dim, hidden_dim, dropout=0.2)
     decoder = VQADecoder(hidden_dim, len(a_vocab), dropout=0.5)
     return VQA(q_embedding, i_embedding, attention, decoder, hidden_dim)

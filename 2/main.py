@@ -11,7 +11,7 @@ import h5py
 from time import time
 
 
-data_path = Path('data')
+data_path = Path('/datashare')
 cache_path = Path('cache')
 
 
@@ -31,12 +31,11 @@ def evaluate_hw2():
     val_loss = 0
     val_score = 0
     val_time = time()
-    for batch, (image, question, question_length, annotation) in enumerate(val_loader):
+    for batch, (image, question, annotation) in enumerate(val_loader):
         batch_time = time()
         annotation = annotation.cuda()
-        result = vqa_model(image.cuda(), question.cuda(), question_length.cuda())
+        result = vqa_model(image.cuda(), question.cuda())
         loss = criterion(result, annotation)
-        loss.backward()
         result_score = nn.functional.one_hot(result.argmax(dim=1), num_classes=vqa_model.num_classes)
         batch_score = torch.sum(result_score * annotation).item() / question.size(0)
         # print(f'Batch {batch} Loss {loss.item():.3f} Score {batch_score:.3f} done in {time() - batch_time:.2f}s')
@@ -57,11 +56,12 @@ def main():
     a_dict.load(cache_path / 'a_vocab.pkl')
     print(len(q_dict), len(a_dict))
     tr_img_dict = pickle.load((cache_path / 'train_imgmap.pkl').open('rb'))
-    tr_img_data = numpy.array(h5py.File(cache_path / 'train_img.hdf5', 'r')['images'])
+    tr_img_data = h5py.File(cache_path / 'train_img.hdf5', 'r')['images']
     t = time()
-    train_dataset = VQADataset(data_path, q_dict, a_dict, tr_img_dict, tr_img_data)
+    train_dataset = VQADataset(data_path, q_dict, a_dict, tr_img_dict, tr_img_data, max_question_length=30)
     print(f'Train dataset loaded in {time() - t:.2f}s with {len(train_dataset)} entries')
     train(train_dataset)
+    evaluate_hw2()
 
 
 if __name__ == '__main__':

@@ -54,7 +54,7 @@ def preprocess(text):
     return text.replace(',', '')
 
 
-def make_cache(data_path, cache_path, min_annotation_occurrences=7, image_dim=64):
+def make_cache(data_path, cache_path, min_annotation_occurrences, image_dim):
     q_dict = Vocabulary()
     a_dict = Vocabulary()
     cache_time = time()

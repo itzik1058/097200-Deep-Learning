@@ -44,16 +44,16 @@ class Vocabulary:
 
 
 class VQADataset(data.Dataset):
-    def __init__(self, path, q_vocab, a_vocab, img_dict, img_data, validation=False):
+    def __init__(self, path, q_vocab, a_vocab, img_dict, img_data, validation=False, max_question_length=None):
         super(VQADataset, self).__init__()
         self.entries = []
         self.q_vocab = q_vocab
         self.a_vocab = a_vocab
         self.img_dict = img_dict
         self.img_data = img_data
-        self.process_data(path, validation)
+        self.process_data(path, validation, max_question_length)
 
-    def process_data(self, path, validation):
+    def process_data(self, path, validation, max_question_length):
         name = 'val' if validation else 'train'
         questions = json.load((path / f'v2_OpenEnded_mscoco_{name}2014_questions.json').open('r'))['questions']
         annotations = json.load((path / f'v2_mscoco_{name}2014_annotations.json').open('r'))['annotations']
@@ -64,6 +64,10 @@ class VQADataset(data.Dataset):
             assert question['image_id'] == annotation['image_id']
             image_id = question['image_id']
             q_tokens = self.q_vocab.tokenize(question['question'])
+            if max_question_length:
+                q_tokens = q_tokens[:max_question_length]
+                pad = max_question_length - len(q_tokens)
+                q_tokens = [self.q_vocab.pad_token] * pad + q_tokens
             answer_count = Counter()
             for answer in annotation['answers']:
                 a_tokens = self.a_vocab.tokenize(answer['answer'], split=False)
@@ -79,21 +83,15 @@ class VQADataset(data.Dataset):
 
     @staticmethod
     def collate(batch):
-        images, questions, question_lengths, annotations = [], [], [], []
+        images, questions, annotations = [], [], []
         for image, question, annotation in batch:
             images.append(torch.tensor(image, dtype=torch.float))
             questions.append(torch.tensor(question))
             annotations.append(annotation)
-            question_lengths.append(len(question))
         images = torch.stack(images)
         questions = torch.nn.utils.rnn.pad_sequence(questions, batch_first=True, padding_value=0)
-        question_lengths = torch.tensor(question_lengths, requires_grad=False)
         annotations = torch.stack(annotations)
-        question_lengths, indices = torch.sort(question_lengths, descending=True)
-        images = images[indices, :]
-        questions = questions[indices, :]
-        annotations = annotations[indices, :]
-        return images, questions, question_lengths, annotations
+        return images, questions, annotations
 
     def __getitem__(self, item):
         img_idx, q_tokens, answers, scores = self.entries[item]
