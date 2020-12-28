@@ -5,49 +5,42 @@ import torch.optim.lr_scheduler as lr_scheduler
 import torch.utils.data as data
 from data import VQADataset
 from model import make_model
-
-
-def collate(batch):
-    images, questions, question_lengths, annotations = [], [], [], []
-    for image, question, annotation in batch:
-        images.append(torch.tensor(image, dtype=torch.float))
-        questions.append(torch.tensor(question))
-        annotations.append(torch.tensor(annotation))
-        question_lengths.append(len(question))
-    images = torch.stack(images)
-    questions = torch.nn.utils.rnn.pad_sequence(questions, batch_first=True, padding_value=0)
-    question_lengths = torch.tensor(question_lengths, requires_grad=False)
-    annotations = torch.stack(annotations)
-    question_lengths, indices = torch.sort(question_lengths, descending=True)
-    images = images[indices, :]
-    questions = questions[indices, :]
-    annotations = annotations[indices, :].view(-1)
-    return images, questions, question_lengths, annotations
+from time import time
 
 
 def train(train_dataset: VQADataset):
-    train_loader = data.DataLoader(train_dataset, batch_size=2, shuffle=True, collate_fn=collate)
-    vqa_model = make_model(train_dataset.q_dict, train_dataset.a_dict, 1024).cuda()
+    train_loader = data.DataLoader(train_dataset, batch_size=2, shuffle=True, collate_fn=train_dataset.collate)
+    vqa_model = make_model(train_dataset.q_vocab, train_dataset.a_vocab, 1024).cuda()
     optimizer = optim.Adagrad(vqa_model.parameters(), lr=4e-3)
     scheduler = lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
-    criterion = nn.CrossEntropyLoss()
-    vqa_model.train()
+    criterion = nn.BCEWithLogitsLoss()
     print('train')
-    for epoch in range(1000):
+    vqa_model.train()
+    for epoch in range(30):
         epoch_loss = 0
-        epoch_accuracy = 0
-        for image, question, question_length, annotation in train_loader:
+        epoch_score = 0
+        epoch_time = time()
+        for batch, (image, question, question_length, annotation) in enumerate(train_loader):
+            batch_time = time()
+            annotation = annotation.cuda()
             result = vqa_model(image.cuda(), question.cuda(), question_length.cuda())
-            loss = criterion(result, annotation.cuda())
+            loss = criterion(result, annotation)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(vqa_model.parameters(), 1)
+            grad = 0
+            for name, param in vqa_model.named_parameters():
+                grad += param.grad.norm()
+            print(f'Grad norm {grad}')
+            torch.nn.utils.clip_grad_norm_(vqa_model.parameters(), max_norm=0.25)
             optimizer.step()
             optimizer.zero_grad()
-            epoch_loss += loss.item()
-            epoch_accuracy += torch.sum(torch.argmax(result, dim=1).cpu() == annotation).item()
-            # print(loss.item(), torch.mean((torch.argmax(result, dim=1).cpu() == annotation).float()).item())
+            result_score = nn.functional.one_hot(result.argmax(dim=1), num_classes=vqa_model.num_classes)
+            batch_score = torch.sum(result_score * annotation).item() / question.size(0)
+            # print(f'Epoch {epoch} Batch {batch} Loss {loss.item():.3f} Score {batch_score:.3f} '
+            #       f'done in {time() - batch_time:.2f}s')
+            epoch_loss += loss.item() * question.size(0)
+            epoch_score += batch_score * question.size(0)
         scheduler.step()
         epoch_loss /= len(train_dataset)
-        epoch_accuracy /= len(train_dataset)
-        print(f'{epoch_loss:.3f}\t{epoch_accuracy:.3f}')
+        epoch_score /= len(train_dataset)
+        print(f'Epoch {epoch} Loss {epoch_loss:.3f} Score {epoch_score:.3f} done in {time() - epoch_time:.2f}s')
     torch.save(vqa_model, 'model.pkl')

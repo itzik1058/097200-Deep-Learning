@@ -1,6 +1,7 @@
 import torch
 import torch.utils.data as data
 import json
+from collections import Counter
 
 
 class Vocabulary:
@@ -15,10 +16,12 @@ class Vocabulary:
     def pad_token(self):
         return 0
 
-    def tokenize(self, sentence, as_sentence=False):
+    def tokenize(self, sentence, split=True, insert=False):
         tokens = []
-        if as_sentence:
+        if not split:
             if sentence not in self.tokens:
+                if not insert:
+                    return None
                 self.words.append(sentence)
                 self.tokens[sentence] = len(self)
             tokens.append(self.tokens[sentence])
@@ -26,6 +29,8 @@ class Vocabulary:
         words = sentence.lower().replace(',', '').replace('?', '').replace('\'s', '').split()
         for word in words:
             if word not in self.tokens:
+                if not insert:
+                    return None
                 self.words.append(word)
                 self.tokens[word] = len(self)
             tokens.append(self.tokens[word])
@@ -39,11 +44,11 @@ class Vocabulary:
 
 
 class VQADataset(data.Dataset):
-    def __init__(self, path, q_dict, a_dict, img_dict, img_data, validation=False):
+    def __init__(self, path, q_vocab, a_vocab, img_dict, img_data, validation=False):
         super(VQADataset, self).__init__()
         self.entries = []
-        self.q_dict = q_dict
-        self.a_dict = a_dict
+        self.q_vocab = q_vocab
+        self.a_vocab = a_vocab
         self.img_dict = img_dict
         self.img_data = img_data
         self.process_data(path, validation)
@@ -58,13 +63,44 @@ class VQADataset(data.Dataset):
             assert question['question_id'] == annotation['question_id']
             assert question['image_id'] == annotation['image_id']
             image_id = question['image_id']
-            q_tokens = self.q_dict.tokenize(question['question'])
-            a_token = self.a_dict.tokenize(annotation['multiple_choice_answer'], as_sentence=True)
-            self.entries.append((self.img_dict[image_id], q_tokens, a_token))
+            q_tokens = self.q_vocab.tokenize(question['question'])
+            answer_count = Counter()
+            for answer in annotation['answers']:
+                a_tokens = self.a_vocab.tokenize(answer['answer'], split=False)
+                if a_tokens is None:
+                    continue
+                a_token = a_tokens[0]
+                answer_count[a_token] += 1
+            answers, scores = [], []
+            for answer, count in answer_count.items():
+                answers.append(answer)
+                scores.append(min(1, count * 0.3))
+            self.entries.append((self.img_dict[image_id], q_tokens, answers, scores))
+
+    @staticmethod
+    def collate(batch):
+        images, questions, question_lengths, annotations = [], [], [], []
+        for image, question, annotation in batch:
+            images.append(torch.tensor(image, dtype=torch.float))
+            questions.append(torch.tensor(question))
+            annotations.append(annotation)
+            question_lengths.append(len(question))
+        images = torch.stack(images)
+        questions = torch.nn.utils.rnn.pad_sequence(questions, batch_first=True, padding_value=0)
+        question_lengths = torch.tensor(question_lengths, requires_grad=False)
+        annotations = torch.stack(annotations)
+        question_lengths, indices = torch.sort(question_lengths, descending=True)
+        images = images[indices, :]
+        questions = questions[indices, :]
+        annotations = annotations[indices, :]
+        return images, questions, question_lengths, annotations
 
     def __getitem__(self, item):
-        img_idx, q_tokens, a_token = self.entries[item]
-        return self.img_data[img_idx], q_tokens, a_token
+        img_idx, q_tokens, answers, scores = self.entries[item]
+        annotation = torch.zeros(len(self.a_vocab))
+        for answer, score in zip(answers, scores):
+            annotation[answer] = score
+        return self.img_data[img_idx], q_tokens, annotation
 
     def __len__(self):
         return len(self.entries)

@@ -1,4 +1,13 @@
 import re
+import pickle
+import json
+import numpy
+import h5py
+from collections import Counter
+from pathlib import Path
+from PIL import Image
+from data import Vocabulary
+from time import time
 
 contractions = {
     "aint": "ain't", "arent": "aren't", "cant": "can't", "couldve": "could've", "couldnt": "couldn't",
@@ -41,5 +50,47 @@ def preprocess(text):
         text = text.replace(p, '')
     text = ' '.join(text.split())
     text = period_strip.sub('', text, re.UNICODE)
-    text = ' '.join(numbers.get(contractions.get(w, w), w) for w in text if w not in articles)
+    text = ' '.join(numbers.get(contractions.get(w, w), w) for w in text.split() if w not in articles)
     return text.replace(',', '')
+
+
+def make_cache(data_path, cache_path, min_annotation_occurrences=7, image_dim=64):
+    q_dict = Vocabulary()
+    a_dict = Vocabulary()
+    cache_time = time()
+    for name in ('train', 'val'):
+        question_time = time()
+        print(f'cache {name}')
+        images = data_path / f'{name}2014'
+        questions = json.load((data_path / f'v2_OpenEnded_mscoco_{name}2014_questions.json').open('r'))['questions']
+        annotations = json.load((data_path / f'v2_mscoco_{name}2014_annotations.json').open('r'))['annotations']
+        annotation_counts = Counter()
+        for question in questions:
+            q_dict.tokenize(question['question'], insert=True)
+        for annotation in annotations:
+            annotation_counts[preprocess(annotation['multiple_choice_answer'])] += 1
+        for annotation, count in annotation_counts.items():
+            if count < min_annotation_occurrences:
+                continue
+            a_dict.tokenize(annotation, split=False, insert=True)
+        print(f'{len(questions)} questions and annotations cached in {time() - question_time:.2f}s')
+        if Path(cache_path / f'{name}_img.hdf5').is_file() and Path(cache_path / f'{name}_imgmap.pkl').is_file():
+            continue
+        img_cache_time = time()
+        img_size = (image_dim, image_dim)
+        n_images = len(list(images.glob('*')))
+        img_dict = {}
+        with h5py.File(cache_path / f'{name}_img.hdf5', 'w') as h5:
+            img_data = h5.create_dataset('images', shape=(n_images, 3, image_dim, image_dim), dtype='i')
+            for i, image in enumerate(images.glob('*')):
+                if i % 10000 == 0:
+                    print(f'{i} images cached')
+                img_id = int(image.name.replace('.jpg', '')[-12:])
+                img_dict[img_id] = i
+                img = numpy.array(Image.open(image).resize(img_size).convert('RGB'))
+                img_data[i, :] = img.reshape((3, image_dim, image_dim))
+        pickle.dump(img_dict, Path(cache_path / f'{name}_imgmap.pkl').open('wb'))
+        print(f'{n_images} images cached in {time() - img_cache_time:.2f}s')
+    q_dict.save(cache_path / 'q_vocab.pkl')
+    a_dict.save(cache_path / 'a_vocab.pkl')
+    print(f'data cached in {time() - cache_time:.2f}s')
