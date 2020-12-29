@@ -9,7 +9,7 @@ from time import time
 
 def train(train_dataset: VQADataset):
     train_loader = data.DataLoader(train_dataset, batch_size=100, shuffle=True, collate_fn=train_dataset.collate)
-    vqa_model = make_model(train_dataset.q_vocab, train_dataset.a_vocab, 2048).cuda()
+    vqa_model = make_model(train_dataset.vocab, train_dataset.ans2label, 2048).cuda()
     optimizer = optim.Adam(vqa_model.parameters(), lr=4e-3)
     criterion = nn.BCEWithLogitsLoss()
     print('train')
@@ -29,8 +29,8 @@ def train(train_dataset: VQADataset):
             optimizer.zero_grad()
             result_score = nn.functional.one_hot(result.argmax(dim=1), num_classes=vqa_model.num_classes)
             batch_score = torch.sum(result_score * annotation).item() / question.size(0)
-            print(f'Epoch {epoch} Batch {batch} Loss {loss.item():.3f} Score {batch_score:.3f} '
-                  f'done in {time() - batch_time:.2f}s')
+            # print(f'Epoch {epoch} Batch {batch} Loss {loss.item():.3f} Score {batch_score:.3f} '
+            #       f'done in {time() - batch_time:.2f}s')
             epoch_loss += loss.item() * question.size(0)
             epoch_score += batch_score * question.size(0)
         epoch_loss /= len(train_dataset)

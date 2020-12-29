@@ -56,23 +56,23 @@ def preprocess(text):
 
 def make_cache(data_path, cache_path, min_annotation_occurrences, image_dim):
     q_dict = Vocabulary()
-    a_dict = Vocabulary()
+    # a_dict = Vocabulary()
     cache_time = time()
     for name in ('train', 'val'):
         question_time = time()
         print(f'cache {name}')
         images = data_path / f'{name}2014'
         questions = json.load((data_path / f'v2_OpenEnded_mscoco_{name}2014_questions.json').open('r'))['questions']
-        annotations = json.load((data_path / f'v2_mscoco_{name}2014_annotations.json').open('r'))['annotations']
-        annotation_counts = Counter()
+        # annotations = json.load((data_path / f'v2_mscoco_{name}2014_annotations.json').open('r'))['annotations']
+        # annotation_counts = Counter()
         for question in questions:
             q_dict.tokenize(question['question'], insert=True)
-        for annotation in annotations:
-            annotation_counts[preprocess(annotation['multiple_choice_answer'])] += 1
-        for annotation, count in annotation_counts.items():
-            if count < min_annotation_occurrences:
-                continue
-            a_dict.tokenize(annotation, split=False, insert=True)
+        # for annotation in annotations:
+        #     annotation_counts[preprocess(annotation['multiple_choice_answer'])] += 1
+        # for annotation, count in annotation_counts.items():
+        #     if count < min_annotation_occurrences:
+        #         continue
+        #     a_dict.tokenize(annotation, split=False, insert=True)
         print(f'{len(questions)} questions and annotations cached in {time() - question_time:.2f}s')
         if Path(cache_path / f'{name}_img.hdf5').is_file() and Path(cache_path / f'{name}_imgmap.pkl').is_file():
             continue
@@ -91,6 +91,6 @@ def make_cache(data_path, cache_path, min_annotation_occurrences, image_dim):
                 img_data[i, :] = img.reshape((3, image_dim, image_dim))
         pickle.dump(img_dict, Path(cache_path / f'{name}_imgmap.pkl').open('wb'))
         print(f'{n_images} images cached in {time() - img_cache_time:.2f}s')
-    q_dict.save(cache_path / 'q_vocab.pkl')
-    a_dict.save(cache_path / 'a_vocab.pkl')
+    q_dict.save(cache_path / 'vocab.pkl')
+    # a_dict.save(cache_path / 'a_vocab.pkl')
     print(f'data cached in {time() - cache_time:.2f}s')

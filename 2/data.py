@@ -1,7 +1,8 @@
 import torch
 import torch.utils.data as data
 import json
-from collections import Counter
+import pickle
+import h5py
 
 
 class Vocabulary:
@@ -16,16 +17,8 @@ class Vocabulary:
     def pad_token(self):
         return 0
 
-    def tokenize(self, sentence, split=True, insert=False):
+    def tokenize(self, sentence, insert=False):
         tokens = []
-        if not split:
-            if sentence not in self.tokens:
-                if not insert:
-                    return None
-                self.words.append(sentence)
-                self.tokens[sentence] = len(self)
-            tokens.append(self.tokens[sentence])
-            return tokens
         words = sentence.lower().replace(',', '').replace('?', '').replace('\'s', '').split()
         for word in words:
             if word not in self.tokens:
@@ -44,42 +37,48 @@ class Vocabulary:
 
 
 class VQADataset(data.Dataset):
-    def __init__(self, path, q_vocab, a_vocab, img_dict, img_data, validation=False, max_question_length=None):
+    def __init__(self, path, cache_path, validation=False, max_question_length=None):
         super(VQADataset, self).__init__()
         self.entries = []
-        self.q_vocab = q_vocab
-        self.a_vocab = a_vocab
-        self.img_dict = img_dict
-        self.img_data = img_data
-        self.process_data(path, validation, max_question_length)
+        self.vocab = None
+        self.img_dict = None
+        self.img_data = None
+        self.ans2label = None
+        self.process_data(path, cache_path, validation, max_question_length)
 
-    def process_data(self, path, validation, max_question_length):
+    def process_data(self, path, cache_path, validation, max_question_length):
         name = 'val' if validation else 'train'
+        self.vocab = Vocabulary()
+        self.vocab.load(cache_path / 'vocab.pkl')
+        self.img_dict = pickle.load((cache_path / f'{name}_imgmap.pkl').open('rb'))
+        self.img_data = h5py.File(cache_path / f'{name}_img.hdf5', 'r')['images']
+        target = pickle.load((cache_path / f'{name}_target.pkl').open('rb'))
+        self.ans2label = pickle.load((cache_path / f'trainval_ans2label.pkl').open('rb'))
         questions = json.load((path / f'v2_OpenEnded_mscoco_{name}2014_questions.json').open('r'))['questions']
-        annotations = json.load((path / f'v2_mscoco_{name}2014_annotations.json').open('r'))['annotations']
-        questions = sorted(questions, key=lambda q: q['question_id'])
-        annotations = sorted(annotations, key=lambda a: a['question_id'])
-        for question, annotation in zip(questions, annotations):
-            assert question['question_id'] == annotation['question_id']
-            assert question['image_id'] == annotation['image_id']
-            image_id = question['image_id']
-            q_tokens = self.q_vocab.tokenize(question['question'])
+        # annotations = json.load((path / f'v2_mscoco_{name}2014_annotations.json').open('r'))['annotations']
+        questions = {q['question_id']: q for q in questions}
+        # annotations = {a['annotatin_id']: a for a in annotations}
+        for entry in target:
+            image_id = entry['image_id']
+            # if len(self.entries) > 50:  # TODO remove this
+            #     continue
+            q_tokens = self.vocab.tokenize(questions[entry['question_id']]['question'])
             if max_question_length:
                 q_tokens = q_tokens[:max_question_length]
                 pad = max_question_length - len(q_tokens)
-                q_tokens = [self.q_vocab.pad_token] * pad + q_tokens
-            answer_count = Counter()
-            for answer in annotation['answers']:
-                a_tokens = self.a_vocab.tokenize(answer['answer'], split=False)
-                if a_tokens is None:
-                    continue
-                a_token = a_tokens[0]
-                answer_count[a_token] += 1
-            answers, scores = [], []
-            for answer, count in answer_count.items():
-                answers.append(answer)
-                scores.append(min(1, count * 0.3))
-            self.entries.append((self.img_dict[image_id], q_tokens, answers, scores))
+                q_tokens = [self.vocab.pad_token] * pad + q_tokens
+            # answer_count = Counter()
+            # for answer in annotation['answers']:
+            #     a_tokens = self.a_vocab.tokenize(answer['answer'], split=False)
+            #     if a_tokens is None:
+            #         continue
+            #     a_token = a_tokens[0]
+            #     answer_count[a_token] += 1
+            # answers, scores = [], []
+            # for answer, count in answer_count.items():
+            #     answers.append(answer)
+            #     scores.append(min(1, count * 0.3))
+            self.entries.append((self.img_dict[image_id], q_tokens, entry['labels'], entry['scores']))
 
     @staticmethod
     def collate(batch):
@@ -95,7 +94,7 @@ class VQADataset(data.Dataset):
 
     def __getitem__(self, item):
         img_idx, q_tokens, answers, scores = self.entries[item]
-        annotation = torch.zeros(len(self.a_vocab))
+        annotation = torch.zeros(len(self.ans2label))
         for answer, score in zip(answers, scores):
             annotation[answer] = score
         return self.img_data[img_idx], q_tokens, annotation
