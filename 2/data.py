@@ -37,7 +37,7 @@ class Vocabulary:
 
 
 class VQADataset(data.Dataset):
-    def __init__(self, path, cache_path, validation=False, max_question_length=None):
+    def __init__(self, path, cache_path, validation=False, max_question_length=23):
         super(VQADataset, self).__init__()
         self.entries = []
         self.vocab = None
@@ -60,7 +60,7 @@ class VQADataset(data.Dataset):
         # annotations = {a['annotatin_id']: a for a in annotations}
         for entry in target:
             image_id = entry['image_id']
-            # if len(self.entries) > 50:  # TODO remove this
+            # if len(self.entries) >= 10000:  # TODO remove this
             #     continue
             q_tokens = self.vocab.tokenize(questions[entry['question_id']]['question'])
             if max_question_length:

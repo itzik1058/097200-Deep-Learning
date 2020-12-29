@@ -22,7 +22,8 @@ class VQA(nn.Module):
         i_embed = self.i_embedding(image)
         q_embed = self.q_embedding(q_embed)
         attention = self.attention(i_embed, q_embed)
-        i_embed = torch.mul(i_embed, attention).sum(dim=1)
+        i_embed = i_embed + torch.mul(i_embed, attention)
+        i_embed = i_embed.sum(dim=1)
         return self.decoder(torch.mul(self.i_hid(i_embed), self.q_hid(q_embed)))
 
 
@@ -48,16 +49,17 @@ class QuestionEncoder(nn.Module):
 class ImageEncoder(nn.Module):
     def __init__(self, channels=3):
         super(ImageEncoder, self).__init__()
-        self.hidden_dim = 512
+        self.hidden_dim = channels
         feature_layers = []
-        for layer in [64, 'M', 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M']:
+        for layer in [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M',
+                      512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M']:
             if layer == 'M':
                 feature_layers.append(nn.MaxPool2d(kernel_size=2, stride=2))
             else:
-                feature_layers.append(nn.Conv2d(channels, layer, kernel_size=3, padding=1))
+                feature_layers.append(nn.Conv2d(self.hidden_dim, layer, kernel_size=3, padding=1))
                 feature_layers.append(nn.BatchNorm2d(layer))
                 feature_layers.append(nn.ReLU(inplace=True))
-                channels = layer
+                self.hidden_dim = layer
         self.features = nn.Sequential(*feature_layers)
         self.avg_pool = nn.AdaptiveAvgPool2d((7, 7))
 
