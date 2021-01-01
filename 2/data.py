@@ -37,16 +37,17 @@ class Vocabulary:
 
 
 class VQADataset(data.Dataset):
-    def __init__(self, path, cache_path, validation=False, max_question_length=23):
+    def __init__(self, path, cache_path, validation=False, question_length=23):
         super(VQADataset, self).__init__()
         self.entries = []
         self.vocab = None
         self.img_dict = None
         self.img_data = None
         self.ans2label = None
-        self.process_data(path, cache_path, validation, max_question_length)
+        self.question_length = question_length
+        self.process_data(path, cache_path, validation, question_length)
 
-    def process_data(self, path, cache_path, validation, max_question_length):
+    def process_data(self, path, cache_path, validation, question_length):
         name = 'val' if validation else 'train'
         self.vocab = Vocabulary()
         self.vocab.load(cache_path / 'vocab.pkl')
@@ -55,29 +56,14 @@ class VQADataset(data.Dataset):
         target = pickle.load((cache_path / f'{name}_target.pkl').open('rb'))
         self.ans2label = pickle.load((cache_path / f'trainval_ans2label.pkl').open('rb'))
         questions = json.load((path / f'v2_OpenEnded_mscoco_{name}2014_questions.json').open('r'))['questions']
-        # annotations = json.load((path / f'v2_mscoco_{name}2014_annotations.json').open('r'))['annotations']
         questions = {q['question_id']: q for q in questions}
-        # annotations = {a['annotatin_id']: a for a in annotations}
         for entry in target:
             image_id = entry['image_id']
-            # if len(self.entries) >= 10000:  # TODO remove this
-            #     continue
             q_tokens = self.vocab.tokenize(questions[entry['question_id']]['question'])
-            if max_question_length:
-                q_tokens = q_tokens[:max_question_length]
-                pad = max_question_length - len(q_tokens)
+            if question_length:
+                q_tokens = q_tokens[:question_length]
+                pad = question_length - len(q_tokens)
                 q_tokens = [self.vocab.pad_token] * pad + q_tokens
-            # answer_count = Counter()
-            # for answer in annotation['answers']:
-            #     a_tokens = self.a_vocab.tokenize(answer['answer'], split=False)
-            #     if a_tokens is None:
-            #         continue
-            #     a_token = a_tokens[0]
-            #     answer_count[a_token] += 1
-            # answers, scores = [], []
-            # for answer, count in answer_count.items():
-            #     answers.append(answer)
-            #     scores.append(min(1, count * 0.3))
             self.entries.append((self.img_dict[image_id], q_tokens, entry['labels'], entry['scores']))
 
     @staticmethod

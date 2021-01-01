@@ -8,42 +8,45 @@ def weight_norm_linear(in_features, out_features):
 
 
 class VQA(nn.Module):
-    def __init__(self, q_embedding, i_embedding, attention, decoder, hidden_dim):
+    def __init__(self, question_encoder, image_encoder, attention, decoder, hidden_dim):
         super(VQA, self).__init__()
-        self.q_embedding = q_embedding
-        self.i_embedding = i_embedding
+        self.question_encoder = question_encoder
+        self.image_encoder = image_encoder
         self.attention = attention
-        self.q_hid = weight_norm_linear(q_embedding.hidden_dim, hidden_dim)
-        self.i_hid = weight_norm_linear(i_embedding.hidden_dim, hidden_dim)
+        self.question_hidden = weight_norm_linear(question_encoder.hidden_dim, hidden_dim)
+        self.image_hidden = weight_norm_linear(image_encoder.hidden_dim, hidden_dim)
         self.decoder = decoder
         self.num_classes = decoder.num_classes
 
-    def forward(self, image, q_embed):
-        i_embed = self.i_embedding(image)
-        q_embed = self.q_embedding(q_embed)
-        attention = self.attention(i_embed, q_embed)
-        i_embed = i_embed + torch.mul(i_embed, attention)
-        i_embed = i_embed.sum(dim=1)
-        return self.decoder(torch.mul(self.i_hid(i_embed), self.q_hid(q_embed)))
+    def forward(self, image, question):
+        image = self.image_encoder(image)
+        question = self.question_encoder(question)
+        attention = self.attention(image, question)
+        image_attention = attention.sum(dim=1).unsqueeze(dim=2)
+        image = torch.mul(image, image_attention).sum(dim=1)
+        image = self.image_hidden(image)
+        question = self.question_hidden(question)
+        return self.decoder(torch.mul(image, question))
 
 
 class QuestionEncoder(nn.Module):
-    def __init__(self, vocab_dim, embed_dim, num_layers):
+    def __init__(self, vocab_size, question_length, embed_dim, num_layers):
         super(QuestionEncoder, self).__init__()
-        self.embedding = nn.Embedding(num_embeddings=vocab_dim, embedding_dim=embed_dim, padding_idx=0)
+        self.embedding = nn.Embedding(num_embeddings=vocab_size, embedding_dim=embed_dim, padding_idx=0)
         self.rnn = nn.LSTM(input_size=embed_dim, hidden_size=embed_dim, num_layers=num_layers,
                            batch_first=True, bidirectional=True)
-        self.rnn_hid = embed_dim
+        self.question_length = question_length
         self.hidden_dim = embed_dim * (1 + self.rnn.bidirectional)
 
     def forward(self, question):
+        assert question.size(1) == self.question_length
         embed = self.embedding(question)
-        rnn_out, _ = self.rnn(embed)
-        forward = rnn_out[:, -1, :self.rnn_hid]
-        backward = rnn_out[:, 0, self.rnn_hid:]
-        state = torch.cat((forward, backward), dim=1)
-        state = state.view(question.size(0), -1)
-        return state
+        states, _ = self.rnn(embed)
+        forward = states[:, -1, :self.rnn.hidden_size]
+        backward = states[:, 0, self.rnn.hidden_size:]
+        final_state = torch.cat((forward, backward), dim=1)
+        final_state = final_state.view(question.size(0), -1)
+        return final_state
 
 
 class ImageEncoder(nn.Module):
@@ -51,8 +54,7 @@ class ImageEncoder(nn.Module):
         super(ImageEncoder, self).__init__()
         self.hidden_dim = channels
         feature_layers = []
-        for layer in [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M',
-                      512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M']:
+        for layer in [64, 'M', 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M']:
             if layer == 'M':
                 feature_layers.append(nn.MaxPool2d(kernel_size=2, stride=2))
             else:
@@ -61,7 +63,7 @@ class ImageEncoder(nn.Module):
                 feature_layers.append(nn.ReLU(inplace=True))
                 self.hidden_dim = layer
         self.features = nn.Sequential(*feature_layers)
-        self.avg_pool = nn.AdaptiveAvgPool2d((7, 7))
+        self.avg_pool = nn.AdaptiveAvgPool2d((11, 11))
 
     def forward(self, x):
         x = self.features(x)
@@ -70,20 +72,16 @@ class ImageEncoder(nn.Module):
 
 
 class VQAttention(nn.Module):
-    def __init__(self, i_dim, q_dim, hidden_dim, dropout):
+    def __init__(self, image_dim, question_dim, hidden_dim, dropout):
         super(VQAttention, self).__init__()
-        self.i_hid = weight_norm_linear(i_dim, hidden_dim)
-        self.q_hid = weight_norm_linear(q_dim, hidden_dim)
-        self.attention = nn.Sequential(
-            nn.Dropout(dropout),
-            weight_norm_linear(hidden_dim, 1),
-            nn.Softmax(dim=1)
-        )
+        self.image_hidden = weight_norm_linear(image_dim, hidden_dim)
+        self.question_hidden = weight_norm_linear(question_dim, hidden_dim)
+        self.attention = nn.Sequential(nn.Dropout(dropout), weight_norm_linear(hidden_dim, 1), nn.Softmax(dim=1))
 
-    def forward(self, i_embed, q_embed):
-        i_hid = self.i_hid(i_embed)
-        q_hid = self.q_hid(q_embed).unsqueeze(dim=1).repeat(1, i_embed.size(1), 1)
-        return self.attention(torch.mul(i_hid, q_hid))
+    def forward(self, image, question):
+        image_hidden = self.image_hidden(image)
+        question_hidden = self.question_hidden(question).unsqueeze(dim=1)
+        return self.attention(image_hidden * question_hidden)
 
 
 class VQADecoder(nn.Module):
@@ -92,8 +90,8 @@ class VQADecoder(nn.Module):
         self.num_classes = vocab_dim
         self.decoder = nn.Sequential(
             weight_norm_linear(state_dim, vocab_dim),
-            nn.SELU(inplace=True),
-            nn.AlphaDropout(dropout),
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout),
             weight_norm_linear(vocab_dim, vocab_dim)
         )
 
@@ -101,9 +99,9 @@ class VQADecoder(nn.Module):
         return self.decoder(state)
 
 
-def make_model(q_vocab, a_vocab, hidden_dim):
-    q_embedding = QuestionEncoder(len(q_vocab), 300, 2)
-    i_embedding = ImageEncoder()
-    attention = VQAttention(i_embedding.hidden_dim, q_embedding.hidden_dim, hidden_dim, dropout=0.2)
-    decoder = VQADecoder(hidden_dim, len(a_vocab), dropout=0.5)
-    return VQA(q_embedding, i_embedding, attention, decoder, hidden_dim)
+def make_model(vocab_size, num_classes, question_length, hidden_dim):
+    q_encoder = QuestionEncoder(vocab_size, question_length, embed_dim=300, num_layers=2)
+    i_encoder = ImageEncoder()
+    attention = VQAttention(i_encoder.hidden_dim, q_encoder.hidden_dim, hidden_dim, dropout=0.2)
+    decoder = VQADecoder(hidden_dim, num_classes, dropout=0.5)
+    return VQA(q_encoder, i_encoder, attention, decoder, hidden_dim)
