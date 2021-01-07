@@ -1,11 +1,10 @@
-from data import VQADataset
 from util import make_cache
 from train import train
 from pathlib import Path
 
 
-data_path = Path('data/')
-cache_path = Path('data/cache')
+data_path = Path('/datashare')
+cache_path = Path('')
 
 
 def main():

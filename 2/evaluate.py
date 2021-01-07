@@ -12,10 +12,11 @@ def evaluate_hw2():
     cache_path = Path('')
     cache = ['vocab.pkl', 'val_img.hdf5', 'val_imgmap.pkl']
     if not all((cache_path / path).is_file() for path in cache):
-        make_cache(data_path, cache_path, image_dim=64, validation_only=True)
+        make_cache(data_path, cache_path, image_dim=64, validation_only=True, verbose=False)
     val_dataset = VQADataset(data_path, cache_path, validation=True)
     val_loader = data.DataLoader(val_dataset, batch_size=100, shuffle=True, collate_fn=val_dataset.collate)
     vqa_model = torch.load('model.pkl')
+    vqa_model.eval()
     score = 0
     for batch, (image, question, annotation) in enumerate(val_loader):
         result = vqa_model(image.cuda(), question.cuda())
@@ -23,3 +24,7 @@ def evaluate_hw2():
         score += torch.sum(result_score * annotation.cuda()).item()
     score /= len(val_dataset)
     return score
+
+
+if __name__ == '__main__':
+    print(evaluate_hw2())

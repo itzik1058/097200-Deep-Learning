@@ -30,11 +30,11 @@ class VQA(nn.Module):
 
 
 class QuestionEncoder(nn.Module):
-    def __init__(self, vocab_size, question_length, embed_dim, num_layers):
+    def __init__(self, vocab_size, question_length, embed_dim, num_layers, dropout):
         super(QuestionEncoder, self).__init__()
         self.embedding = nn.Embedding(num_embeddings=vocab_size, embedding_dim=embed_dim, padding_idx=0)
         self.rnn = nn.LSTM(input_size=embed_dim, hidden_size=embed_dim, num_layers=num_layers,
-                           batch_first=True, bidirectional=True)
+                           batch_first=True, bidirectional=True, dropout=dropout)
         self.question_length = question_length
         self.hidden_dim = embed_dim * (1 + self.rnn.bidirectional)
 
@@ -54,7 +54,7 @@ class ImageEncoder(nn.Module):
         super(ImageEncoder, self).__init__()
         self.hidden_dim = channels
         feature_layers = []
-        for layer in [64, 'M', 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M']:
+        for layer in [18, 'M', 36, 'M', 72, 72, 'M', 144, 144, 'M', 288, 288, 'M']:
             if layer == 'M':
                 feature_layers.append(nn.MaxPool2d(kernel_size=2, stride=2))
             else:
@@ -63,7 +63,7 @@ class ImageEncoder(nn.Module):
                 feature_layers.append(nn.ReLU(inplace=True))
                 self.hidden_dim = layer
         self.features = nn.Sequential(*feature_layers)
-        self.avg_pool = nn.AdaptiveAvgPool2d((11, 11))
+        self.avg_pool = nn.AdaptiveAvgPool2d((7, 7))
 
     def forward(self, x):
         x = self.features(x)
@@ -100,8 +100,8 @@ class VQADecoder(nn.Module):
 
 
 def make_model(vocab_size, num_classes, question_length, hidden_dim):
-    q_encoder = QuestionEncoder(vocab_size, question_length, embed_dim=300, num_layers=2)
+    q_encoder = QuestionEncoder(vocab_size, question_length, embed_dim=300, num_layers=2, dropout=0.3)
     i_encoder = ImageEncoder()
-    attention = VQAttention(i_encoder.hidden_dim, q_encoder.hidden_dim, hidden_dim, dropout=0.2)
+    attention = VQAttention(i_encoder.hidden_dim, q_encoder.hidden_dim, hidden_dim, dropout=0.4)
     decoder = VQADecoder(hidden_dim, num_classes, dropout=0.5)
     return VQA(q_encoder, i_encoder, attention, decoder, hidden_dim)

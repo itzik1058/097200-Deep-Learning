@@ -154,8 +154,9 @@ def create_dir(path):
         try:
             os.makedirs(path)
         except OSError as exc:
-            if exc.errno != errno.EEXIST:
-                raise
+            pass
+            # if exc.errno != errno.EEXIST:
+            #     raise
 
 
 def create_ans2label(occurence, name, cache_root):
@@ -242,18 +243,18 @@ def get_question(qid, questions):
 
 
 def load_v2():
-    train_answer_file = 'data/v2_mscoco_train2014_annotations.json'
+    train_answer_file = '/datashare/v2_mscoco_train2014_annotations.json'
     with open(train_answer_file) as f:
         train_answers = json.load(f)['annotations']
 
-    val_answer_file = 'data/v2_mscoco_val2014_annotations.json'
+    val_answer_file = '/datashare/v2_mscoco_val2014_annotations.json'
     with open(val_answer_file) as f:
         val_answers = json.load(f)['annotations']
 
     occurence = filter_answers(train_answers, 9)
-    ans2label = create_ans2label(occurence, 'trainval', "data/cache")
-    compute_target(train_answers, ans2label, 'train', "data/cache")
-    compute_target(val_answers, ans2label, 'val', "data/cache")
+    ans2label = create_ans2label(occurence, 'trainval', "")
+    compute_target(train_answers, ans2label, 'train', "")
+    compute_target(val_answers, ans2label, 'val', "")
 
 
 def main():

@@ -22,11 +22,11 @@ def train(data_path, cache_path):
     optimizer = optim.Adam(vqa_model.parameters(), lr=4e-3)
     criterion = nn.BCEWithLogitsLoss()
     print('train')
-    vqa_model.train()
     tr_losses, tr_scores, val_losses, val_scores = [], [], [], []
     for epoch in range(25):
         epoch_time = time()
         epoch_loss, epoch_score = 0, 0
+        vqa_model.train()
         for batch, (image, question, annotation) in enumerate(train_loader):
             annotation = annotation.cuda()
             result = vqa_model(image.cuda(), question.cuda())
@@ -44,6 +44,7 @@ def train(data_path, cache_path):
         tr_losses.append(epoch_loss)
         tr_scores.append(epoch_score)
         val_loss, val_score = 0, 0
+        vqa_model.eval()
         with torch.no_grad():
             for batch, (image, question, annotation) in enumerate(val_loader):
                 annotation = annotation.cuda()
@@ -59,6 +60,7 @@ def train(data_path, cache_path):
         val_scores.append(val_score)
         print(f'Epoch {epoch} Train Loss {epoch_loss:.4f} Train Score {epoch_score:.3f} '
               f'Validation Loss {val_loss:.4f} Validation Score {val_score:.3f} done in {time() - epoch_time:.2f}s')
+    torch.save(vqa_model, 'model.pkl')
     fig, ax = plt.subplots(nrows=2)
     ax[0].plot(tr_losses, label='Train')
     ax[0].plot(val_losses, label='Validation')
@@ -70,4 +72,3 @@ def train(data_path, cache_path):
     ax[1].set_title('Score')
     plt.legend()
     plt.show()
-    torch.save(vqa_model, 'model.pkl')
