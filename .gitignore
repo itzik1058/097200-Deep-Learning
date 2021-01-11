@@ -1,4 +1,6 @@
+*.pkl
 MNIST/
+celeba/
 data/
 cache/
 .idea/
